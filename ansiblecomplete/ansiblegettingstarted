@@ -1,0 +1,28 @@
+# ch1 getting started with ansible
+# ansible installation python-pip python-devel gcc, make
+
+sudo pip install ansible
+
+# on centos
+yum -y install ansible
+
+# If you're on RedHat/CentOS 7:
+$ rpm -ivh http://dl.fedoraproject.org/pub/epel/7/x86_64/e/epel-release-7-5.noarch.rpm
+
+$ ansible --version
+
+### creatting a basic inventory file
+$ vim /etc/ansible/hosts
+
+$ sudo mkdir /etc/ansible
+$ sudo touch /etc/ansible/hosts
+
+# put as
+[example]
+www.example.com
+
+### Running your Ad-Hoc Ansible command
+
+$ ansible example -m ping -u [username]
+
+$ ansible example -a "free -m" -u [username] -vvvv
