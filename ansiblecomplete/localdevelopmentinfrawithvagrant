@@ -1,0 +1,43 @@
+# your first local server with vagrant
+
+# provisioning config for ansible
+config.vm.provision "ansible" do |ansible|
+  ansible.playbook = "playbook.yml"
+  # run commands as root
+  ansible.sudo = true
+end
+
+# your first ansible playbook
+---
+- hosts: all
+  tasks:
+  - name: Ensure NTP (for time synchronization ) is installed
+    yum: name=ntp state=installed
+    ### this is equal to shell script
+    # if ! rpm -qa | grep -qw ntp; then
+      # yum install ntp
+    # fi
+    ###
+
+  - name: Ensure NTP is running
+    service: name=ntpd state=started enable=yes
+### start ntpd if it's not already running with shell script
+  # if ps aux | grep -v grep | grep "[n]tpd" > /dev/null
+  # then
+      # echo "ntpd is running." > /dev/null
+  # else
+      # /sbin/service ntpd restart > /dev/null
+      # echo "started ntpd"
+  # fi
+
+
+
+  ### make sure ntpd is enabled on system startup
+
+  # chkconfig ntpd on
+
+### we could be even more terse
+  ---
+  - hosts: all
+    tasks:
+    - yum: name=ntp state=installed
