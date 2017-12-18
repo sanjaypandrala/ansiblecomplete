@@ -1,0 +1,210 @@
+###On any given day, a systems administrator has many tasks:
+# Apply patches and updates via yum, apt, and other package managers.
+# Check resource usage (disk space, memory, CPU, swap space, network).
+# Check log files.
+# Manage system users and groups.
+# Manage DNS settings, hosts files, etc.
+# Copy files to and from servers.
+# Deploy applications or run application maintenance.
+# Reboot servers.
+# Manage cron jobs.
+
+
+### build infra with vagrant for testing
+### 2 app servers 1 db server
+### -*- mode: ruby -*-
+### vi: set ft=ruby :
+
+###VAGRANTFILE_API_VERSION = "2"
+
+# Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
+  # config.ssh.insert_key = false
+  # config.vm.provider :virtualbox do |vb|
+    # vb.customize ["modifyvm", :id, "--memory", "256"]
+  #end
+
+### Application server 1.
+  #config.vm.define "app1" do |app|
+    #app.vm.hostname = "orc-app1.dev"
+    #app.vm.box = "geerlingguy/centos7"
+    #app.vm.network :private_network, ip: "192.168.60.4
+  #end
+
+### Application server 2.
+ #config.vm.define "app2" do |app|
+  # app.vm.hostname = "orc-app2.dev"
+  # app.vm.box = "geerlingguy/centos7"
+  # app.vm.network :private_network, ip: "192.168.60.5"
+ #end
+
+### Database server.
+ #config.vm.define "db" do |db|
+#   db.vm.hostname = "orc-db.dev"
+#   db.vm.box = "geerlingguy/centos7"
+#   db.vm.network :private_network, ip: "192.168.60.6"
+# end
+#end
+
+
+### inventory file for multiple servers
+# Lines beginning with a # are comments, and are only included for
+# illustration. These comments are overkill for most inventory files.
+
+# Application servers
+[app]
+192.168.60.4
+192.168.60.5
+# Database server
+[db]
+192.168.60.6
+
+# Group 'multi' with all servers
+[multi:children]
+app
+db
+
+# Variables that will be applied to all servers
+[multi:vars]
+ansible_ssh_user=vagrant
+ansible_ssh_private_key_file=~/.vagrant.d/insecure_private_key
+
+'''The first block puts both of our application servers into an ‘app’ group.
+The second block puts the database server into a ‘db’ group.
+The third block tells ansible to define a new group ‘multi’, with child groups, and we add in
+both the ‘app’ and ‘db’ groups.
+The fourth block adds variables to the multi group that will be applied to all servers within
+multi and all its children.
+'''
+### your first adhoc commands
+### discover ansible parallel nature
+
+# use ansible with the -a argument 'hostname' to run hostname against all the servers
+$ ansible multi -a "hostname"
+
+### run the same cmd again but this time add the argument -f 1 to tell ansible to use only one fork
+$ ansible multi -a "hostname" -f 1
+
+### let's make sure the servers have disk space available for our application
+$ ansible multi -a "df -h"
+
+### let's make sure servers have enough memory
+$ ansible multi -a "free -m"
+
+### let's make sure the date and time on each server is in sync
+$ ansible multi -a "date"
+
+### make changes using ansible modules -s for sudo; use -k (alias for --ask-sudo-pass)
+$ ansible multi -s -m yum -a "name=ntp state=installed"
+$ ansible multi -s -m service -a "name=ntpd state=started enabled=yes"
+
+
+### stop and start ntp service
+$ ansible multi -s -a "service ntpd stop"xxansibel multi -s -a "ntpdate -q 0.rhel.pool.ntp.org"
+$ ansible multi -s -a "service ntpd start"
+
+### in my test i was within three one-hundredths of a second on all servers
+
+### configure groups of servers, individual servers
+
+## configure the application servers
+$ ansible app -s -m yum -a "name=MySQL-python state=present"
+$ ansible app -s -m yum -a " name=python-setuptools state=present"
+$ ansible app -s -m easy_install -a "name=django"
+
+### you could install django using pip which can installed via pip
+$ ansible app -a "python -c 'import django; print django.get_version()'"
+
+## configure the database servers
+
+$ ansible db -s -m yum -a "name=mariadb-server state=present"
+$ ansible db -s -m service -a "name=mariadb state=started enable=yes"
+$ ansible db -s -a "iptables -F"
+$ ansible db -s -a "iptables -A INPUT -s -A INPUT -s 192.x.x.x.x -p tcp \
+  -m tcp --dport 3306 -j ACCEPT"
+
+$ ansible db -s -m yum -a "name=MySQL-python state=present"
+$ ansible db -s -m mysql_user -a "name=django host=% password=12345 priv=*.*:ALL state=present"
+'''
+At this point, you should be able to create or deploy a Django application on the app servers, then
+point it at the database server with the username django and password 12345.
+The MySQL configuration used here is for example/development purposes only! There are
+a few other things you should do to secure a production MySQL server, including removing
+the test database, adding a password for the root user account, restricting the IP addresses
+allowed to access port 3306 more closely, and some other minor cleanups. Some of these
+things will be covered later in this book, but, as always, you are responsible for securing
+your servers—make sure you’re doing it correctly!
+'''
+$ ansible app -s -a "service ntpd status"
+$ ansible app -s -a "service ntpd restart " --limit "192.x.x.x.x"
+
+### the --limit argument to limit the command to a specific host in the specified group --limit will match
+## limit hosts with a sample pattern (asterisk  is a wildcard)
+$ ansible app -s -a "service ntpd restart " --limit ~".*\.4"
+
+## limit hosts with a regular expression (prefix with a tilde).
+$ ansible app -s -a "service ntpd restart" -- limit ~".*\4"
+
+'''
+use --limit option for running cmds on single servers
+
+'''
+### manage users and groups
+
+$ ansible app -s -m group -a "name=admin state=present"
+
+## now add the user johndoe to the app servers
+$ ansible app -s -m user -a "name=johndoe group=admin createhome=yes"
+$ ansible app -s -m user -a "name=johndoe state=absent remove=yes"
+
+### manage files and directories
+## get information about a file
+$ ansible multi -m stat -a "path=/etc/environment"
+
+### copy a file to the servers
+$ ansible multi -m copy -a "src=/etc/hosts dest=/tmp/hosts"
+
+### retrive a file from the servers
+$ ansible multi -s -m fetch -a "src=/etc/hosts dest=/tmp"
+
+### create directories and files
+
+$ ansible multi -m file -a "dest=/tmp/test mode=644 state=directory"
+
+## to create symlink
+$ ansible multi -m file -a "src=/src/symlink dest=/dest/syslink owner=root group=root state=link"
+
+## delete directories and files
+$ ansible multi -m file -a "dest=/tmp/test state=absent"
+
+## run operations in the backgroud
+$ -B <seconds>
+$ -P <seconds>
+## update servers asynchronously, monitoring progress
+$ ansible multi -s -B 3600 -a "yum -y update"
+
+## fire and forget tasks
+$ ansible multi -B 3600 -P 0 -a "/path/to/fire-and-forget-script.sh"
+
+## check log files
+
+$ ansible multi -s -a "tail /var/log/messages"
+$ ansible multi -s -m -a shell "tail /var/log/messages grep ansible-command | wc -1"
+
+## manaage cron jobs
+$ ansible multi -s -m cron -a "name='daily-cron-all-servers' hour=4 job='/path/to/daily-script.sh'"
+$ ansible multi -s -m -a cron "name='daily-cron-all-servers' state=absent"
+
+### deploy a version-controlled application
+$ ansible app -s -m git -a "repo=git://example.com/path/to/repo.git dest=/opt/myapp update=yes version=1.2.4"
+$ ansible app -s -a "/opt/myapp/update.sh"
+
+### ansible SSH connection history
+## paramiko
+## openssh
+## accelerated mode
+---
+- hosts: all
+  accelerated: true
+  ....
+## faster openssh in ansible 1.5+
+# pipelining=True
