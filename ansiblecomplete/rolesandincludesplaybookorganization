@@ -1,0 +1,404 @@
+### Playbook Organization - Roles and Includes
+## We’ll look at two ways to split up tasks more efficiently using includes and roles,
+
+### includes
+## when vars_files was used to place variables into a separate vars.yml file instead of inline with the playbook:
+- hosts: all
+vars_files:
+- vars.yml
+## Tasks can easily be included in a similar way. In the tasks: section of your playbook, you can add
+## include directives like so:
+tasks:
+- include: included-playbook.yml
+
+## Just like with variable include files, tasks are formatted in a flat list in the included file. As an
+## example, the included-playbook.yml could look like this
+
+---
+- name: Add profile info for user.
+  copy:
+    src: example_profile
+    dest: "/home/{{ username }}/.profile"
+    owner: "{{ username }}"
+    group: "{{ username }}"
+    mode: 0744
+- name: Add private keys for user.
+  copy:
+    src: "{{ item.src }}"
+    dest: "/home/.ssh/{{ item.dest }}"
+    owner: "{{ username }}"
+    group: "{{ username }}"
+    mode: 0600
+  with_items: ssh_private_keys
+- name: Restart example service.
+  service: name=example state=restarted
+
+---
+- name: Add profile info for user.
+copy:
+src: example_profile
+dest: "/home/{{ username }}/.profile"
+owner: "{{ username }}"
+group: "{{ username }}"
+mode: 0744
+- name: Add private keys for user.
+copy:
+src: "{{ item.src }}"
+dest: "/home/.ssh/{{ item.dest }}"
+owner: "{{ username }}"
+group: "{{ username }}"
+mode: 0600
+with_items: ssh_private_keys
+- name: Restart example service.
+service: name=example state=restarted
+
+## if you want to configure a particular user’s account, add the following in your
+## playbook’s tasks section:
+- include: example-app-config.yml
+
+## We used {{ username }} and {{ ssh_private_keys }} variables in this include file instead of
+## hard-coded values so we could make this include file reusable.
+- { include: user-config.yml, username: johndoe, ssh_private_keys: [] }
+- { include: user-config.yml, username: janedoe, ssh_private_keys: [] }
+## To make the syntax more readable, you can use structured variables, like so
+
+- include: user-config.yml
+vars:
+username: johndoe
+ssh_private_keys:
+- { src: /path/to/johndoe/key1, dest: id_rsa }
+- { src: /path/to/johndoe/key2, dest: id_rsa_2 }
+- include: user-config.yml
+vars:
+username: janedoe
+ssh_private_keys:
+- { src: /path/to/janedoe/key1, dest: id_rsa }
+- { src: /path/to/janedoe/key2, dest: id_rsa_2 }
+## Include files can even include other files, so you could have something like the following:
+## tasks:
+- include: user-config.yml
+## inside user-config.yml
+- include: ssh-setup.yml
+
+### Handler includes
+## Handlers can be included just like tasks, within a playbook’s handlers section. For example:
+## This can be helpful in limiting the noise in your main playbook, since handlers are usually used
+## for things like restarting services or loading a configuration, and can distract from the playbook’s
+## primary purpose
+handlers:
+- include: included-handlers.yml
+
+### Playbook includes
+## Playbooks can even be included in other playbooks, using the same include syntax in the top level
+## of your playbook. For example, if you have two playbooks—one to set up your webservers (web.yml),
+## and one to set up your database servers (db.yml), you could use the following playbook to run both
+## at the same time
+- hosts: all
+remote_user: root
+tasks:
+...
+- include: web.yml
+- include: db.yml
+## This way, you can create playbooks to configure all the servers in your infrastructure, then create
+## a master playbook that includes each of the individual playbooks.
+
+### Complete includes example
+## we could remake the 137-line Drupal LAMP server playbook from Chapter 4 in
+## just 21 lines
+---
+- hosts: all
+
+  vars_files:
+    - vars.yml
+
+  pre_tasks:
+    - name: Update apt cache if needed.
+      apt: update_cache=yes cache_valid_time=3600
+
+ handlers:
+   - include: handlers/handlers.yml
+
+ tasks:
+   - include: tasks/common.yml
+   - include: tasks/apache.yml
+   - include: tasks/php.yml
+   - include: tasks/mysql.yml
+   - include: tasks/composer.yml
+   - include: tasks/drush.yml
+   - include: tasks/drupal.yml
+
+## All you need to do is create two new folders in the same folder where you saved the Drupal
+## playbook.yml file, handlers and tasks, then create files inside for each section of the playbook.
+## For example, inside handlers/handlers.yml, you’d have:
+
+---
+- name: restart apache
+  service: name=apache2 state=restarted
+
+## And inside tasks/drush.yml:
+---
+- name: Check out drush master branch.
+  git:
+    repo: https://github.com/drush-ops/drush.git
+    dest: /opt/drush
+
+- name: Install Drush dependencies with Composer."
+  shell: >
+    /usr/local/bin/composer install
+    chdir=/opt/drush
+    creates=/opt/drush/vendor/autoload.php
+
+- name: Create drush bin symlink.
+  file:
+    src: /opt/drush/drush
+    dest: /usr/local/bin/drush
+    state: link
+
+
+## Most of the time, it’s best to start with a monolithic playbook while you’re working on the setup and configuration
+## details, then move sets of tasks out to included files after you start seeing logical groupings
+
+### Roles
+## way to take bits of related configuration, and package them
+## together nicely? Additionally, what if we could take these packages (often configuring the same thing
+## on many different servers) and make them flexible so that we can use the same package throughout
+## our infrastructure, with slightly different settings on individual servers or groups of servers
+
+
+### Role scaffolding
+
+## Ansible automatically includes any main.yml files inside specific directories that make up the role.
+## There are only two directories required to make a working Ansible role:
+
+role_name/
+  meta/
+  tasks/
+
+## Another simple way to build the scaffolding for a role is to use the command:
+## ansible-galaxy init role_name. Running this command creates an example role in
+## the current working directory, which you can modify to suit your needs. Using the init
+## command also ensures the role is structured correctly in case you want to someday
+## contribute the role to Ansible Galaxy
+
+### Building your first role
+## Create a roles folder in the same directory as the main playbook.yml
+
+playbook
+roles
+	meta
+		main.yml
+		---
+		dependencies: []
+	tasks
+		main.yml
+		---
+		- name: Install Node.js (npm plus all its dependencies).
+		  yum: name=npm state=present enablerepo=epel
+
+		- name: Install forever module (to run our Node.js app).
+		  npm: name=forever global=yes state=latest
+The Node.js directory structure should now look like the following:
+nodejs-app/
+  app/
+    app.js
+    package.json
+  playbook.yml
+  roles/
+    nodejs/
+      meta/
+        main.yml
+      tasks/
+        main.yml
+
+
+## Delete the Node.js app installation lines from playbook.yml, and reformat the playbook
+## so the other tasks run first (in a pre_tasks: section instead of tasks:), then the role, then the rest
+## of the tasks (in the main tasks: section). Something like:
+pre_tasks:
+  # EPEL/GPG setup, firewall configuration...
+roles:
+  - nodejs
+tasks:
+  # Node.js app deployment tasks.
+
+### More flexibility with role vars and defaults
+Modify the tasks/main.yml file to use a list variable and iterate through the list to install as many
+packages as your playbook wants:
+---
+- name: Install Node.js (npm plus all its dependencies).
+  yum: name=npm state=present enablerepo=epel
+
+- name: Install npm modules required by our app.
+  npm: name={{ item }} global=yes state=latest
+  with_items: node_npm_modules
+## Let’s provide a sane default for the new node_npm_modules variable in defaults/main.yml:
+---
+node_npm_modules:
+  - forever
+## Now, if you run the playbook as-is, it will still do the exact same thing—install the forever module.
+## But since the role is more flexible, we could create a new playbook like our first, but add a variable
+## (either in a vars section or in an included file via vars_files) to override the default
+
+node_npm_modules:
+  - forever
+  - async
+  - request
+
+## Imagine if you had a playbook structure like:
+---
+- hosts: appservers
+  roles:
+    - yum-repo-setup
+    - firewall
+    - nodejs
+    - app-deploy
+## Each one of the roles lives in its own isolated world, and can be shared with other servers and groups
+## of servers in your infrastructure.
+## A yum-repo-setup role could enable certain repositories and import their GPG keys.
+## A firewall role could have per-server or per-inventory-group options for ports and services
+## to allow or deny.
+## An app-deploy role could deploy your app to a directory (configurable per-server) and set
+## certain app options per-server or per-group
+
+### Other role parts: handlers, files, and templates
+
+## Handlers
+## we introduced handlers—tasks that could be called via the notify
+## option after any playbook task resulted in a change—and an example handler for restarting Apache
+## handlers are first-class citizens, alongside tasks, variables, and other configuration.
+## You can store handlers directly inside a main.yml
+handlers:
+  - name: restart apache
+    service: name=apache2 state=restarted
+### Files and Templates
+
+roles/
+  example/
+    files/
+      example.conf
+    meta/
+      main.yml
+    templates/
+      example.xml.j2
+    tasks/
+      main.yml
+
+## when copying a file directly to the server, add the filename or the full path from within a role’s
+## files directory
+
+- name: Copy configuration file to server directly.
+  copy: >
+    src=example.conf
+    dest=/etc/myapp/example.conf
+    mode=644
+
+
+## when specifying a template, add the filename or the full path from within a role’s
+## templates directory
+## The copy module copies files from within the module’s files folder, and the template module runs
+## given template files through the Jinja2 templating engine, merging in any variables available during
+## your playbook run before copying the file to the server
+
+
+- name: Copy configuration file to server using a template.
+  template: >
+     src=example.xml.j2
+     dest=/etc/myapp/example.xml
+     mode=644
+### Organizing more complex and cross-platform roles
+## As a rule of thumb, I keep my playbook and role task files under 100 lines of YAML if at all possible.
+## It’s easier to keep the entire set of tasks in my head while making changes or fixing bugs. If I start
+## nearing that limit, I usually split the tasks into logical groupings, and include files from the main.yml
+## file.
+
+- name: Include OS-specific variables.
+  include_vars: "{{ ansible_os_family }}.yml"
+
+- include: setup-RedHat.yml
+  when: ansible_os_family == 'RedHat'
+
+ - include: setup-Debian.yml
+   when: ansible_os_family == 'Debian'
+
+ - name: Other OS-agnostic tasks
+
+## 1. Two important things to notice about this style of distribution-specific inclusion
+## When including vars files (with include_vars), you can actually use variables in the name of
+## the file. This is handy in many situtations, and here we’re including a vars file in the format
+## distribution_name.yml. For our purposes, since the role will be used on Debian and RedHatbased
+## hosts, we can create Debian.yml and RedHat.yml files in our role’s defaults and vars
+## folders, and put distribution-specific variables there.
+## 2. When including playbook files (with include), you can’t use variables in the name of the file,
+## but you can do the next best thing: include the files by name explicitly, and use a condition to
+## tell Ansible whether to run the tasks inside (the when condition will be applied to every task
+## inside the included playbook).
+## After setting things up this way, I put RedHat and CentOS-specific tasks (like yum tasks) into
+## tasks/setup-RedHat.yml, and Debian and Ubuntu-specific tasks (like apt tasks) into tasks/setupDebian.yml.
+## There are other ways of making roles work cross-platform, but using distributionspecific
+## variables files and included playbooks is one of the simplest
+
+
+### Ansible Galaxy
+## Ansible roles are powerful and flexible; they allow you to encapsulate sets of configuration and
+## deployable units of playbooks, variables, templates, and other files, so you can easily reuse them
+## across different servers
+
+### Getting roles from Galaxy
+## You could think of Galaxy roles as glorified packages; they not only install software, but they
+## configure it exactly how you want it, every time, with minimal adjustment.
+
+
+## LAMP (Linux, Apache, MySQL and PHP)
+
+## Using role requirements files to manage dependencies
+## You can, however, pass the ansible-galaxy command a “requirements” file to automatically
+## download all the included dependencies, whether they exist on Ansible Galaxy or in some other
+## repository
+
+## with a particular version number, and then run ansible-galaxy install -r requirements.txt. Ansible will download all the roles from
+## Galaxy into your local roles path.
+$ ansible-galaxy install -r requirements.txt
+
+
+## An example requirements.yml file looks like this
+# From Ansible Galaxy, like the earlier requirements.txt example.
+- src: geerlingguy.firewall
+
+# From GitHub, into a particular path, with a custom name and version.
+- src: https://github.com/geerlingguy/ansible-role-passenger
+  path: /etc/ansible/roles/
+  name: passenger
+  version: 1.0.2
+
+# From a web server, with a custom name.
+- src: https://www.example.com/ansible/roles/my-role-name.tar.gz
+  name: my-role
+
+### A LAMP server in six lines of YAML
+## First, create an Ansible playbook named lamp.yml with the following contents:
+---
+- hosts: all
+  roles:
+    - geerlingguy.mysql
+    - geerlingguy.apache
+    - geerlingguy.php
+
+## Now, run the playbook against a host:
+
+$ ansible-playbook -i path/to/custom-inventory lamp.yml
+
+
+### A Solr server in six lines of YAML
+Then create a playbook named solr.yml with the following contents:
+---
+- hosts: all
+  roles:
+    - geerlingguy.java
+    - geerlingguy.tomcat6
+    - geerlingguy.solr
+
+### Helpful Galaxy commands
+## ansible-galaxy list displays a list of installed roles, with version numbers
+## ansible-galaxy remove [role] removes an installed role
+## ansible-galaxy init can be used to create a role template suitable for submission to Ansible
+## Galaxy
